@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Engine RUL Prediction</title>
+</head>
+<body>
+    <h1>Engine Remaining Useful Life (RUL) Prediction</h1>
+    <form action="/predict" method="post">
+        <h2>Enter Sensor Data</h2>
+        {% for column in sensor_columns %}
+            <label for="{{ column }}">{{ column }}:</label>
+            <input type="text" name="{{ column }}" id="{{ column }}" required><br><br>
+        {% endfor %}
+        <input type="submit" value="Predict RUL">
+    </form>
+
+    <h3>{{ prediction_text }}</h3>
+</body>
+</html>

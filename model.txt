@@ -1,0 +1,94 @@
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, r2_score
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import GRU, Dense, Dropout
+from tensorflow.keras.callbacks import EarlyStopping
+
+# Define constants
+SEQUENCE_LENGTH = 30
+
+# Pipeline Function
+def preprocess_data(data, sequence_length=SEQUENCE_LENGTH, is_test=False):
+    """Preprocess the data: normalize, create sequences, and handle missing values."""
+    # Normalize
+    scaler = MinMaxScaler()
+    data.iloc[:, 2:] = scaler.fit_transform(data.iloc[:, 2:])
+    
+    # Generate sequences
+    def create_sequences(data, sequence_length=30, drop_rul=True):
+        sequences, labels = [], []
+        for unit in data['Unit'].unique():
+            unit_data = data[data['Unit'] == unit].sort_values('Time')
+            for i in range(len(unit_data) - sequence_length):
+                sequence = unit_data.iloc[i:i+sequence_length].drop(columns=['Unit', 'Time']).values
+                sequences.append(sequence)
+                if drop_rul and 'RUL' in unit_data.columns:
+                    labels.append(unit_data.iloc[i + sequence_length - 1]['RUL'])
+        if drop_rul and 'RUL' in data.columns:
+            return np.array(sequences), np.array(labels)
+        return np.array(sequences)
+
+    if is_test:
+        return create_sequences(data, sequence_length, drop_rul=False)
+    return create_sequences(data, sequence_length)
+
+# Prepare Training Data
+train_data['RUL'] = train_data.groupby('Unit')['Time'].transform(lambda x: x.max() - x)
+X_train_seq, y_train_seq = preprocess_data(train_data)
+
+# Split Data
+X_train_gru, X_val_gru, y_train_gru, y_val_gru = train_test_split(X_train_seq, y_train_seq, test_size=0.2, random_state=42)
+
+# Define GRU Model
+def build_gru_model(input_shape):
+    model = Sequential()
+    model.add(GRU(128, input_shape=input_shape, return_sequences=False))
+    model.add(Dropout(0.2))
+    model.add(Dense(64, activation='relu'))
+    model.add(Dropout(0.2))
+    model.add(Dense(1))
+    model.compile(optimizer='adam', loss='mean_squared_error', metrics=['mae', 'mse'])
+    return model
+
+# Train GRU Model
+gru_model = build_gru_model((SEQUENCE_LENGTH, X_train_gru.shape[2]))
+early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+
+history = gru_model.fit(
+    X_train_gru, y_train_gru,
+    validation_data=(X_val_gru, y_val_gru),
+    epochs=50, batch_size=32,
+    callbacks=[early_stopping]
+)
+
+# Evaluate on Validation Data
+y_val_pred = gru_model.predict(X_val_gru)
+mae_val = mean_absolute_error(y_val_gru, y_val_pred)
+r2_val = r2_score(y_val_gru, y_val_pred)
+print(f"Validation MAE: {mae_val:.2f}")
+print(f"Validation R2 Score: {r2_val:.2f}")
+
+# Test Set Evaluation
+X_test_seq = preprocess_data(test_data, sequence_length=SEQUENCE_LENGTH, is_test=True)
+y_test_pred = gru_model.predict(X_test_seq)
+
+# Evaluate on Test Data
+mae_test = mean_absolute_error(rul_data['RUL'], y_test_pred)
+r2_test = r2_score(rul_data['RUL'], y_test_pred)
+print(f"Test MAE: {mae_test:.2f}")
+print(f"Test R2 Score: {r2_test:.2f}")
+
+# Plot True vs Predicted RUL for Test Data
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(12, 6))
+plt.plot(rul_data['RUL'], label='True RUL', color='blue')
+plt.plot(y_test_pred, label='Predicted RUL', color='red')
+plt.title('True vs Predicted RUL (Test Data)')
+plt.xlabel('Unit Number')
+plt.ylabel('RUL')
+plt.legend()
+plt.show()
