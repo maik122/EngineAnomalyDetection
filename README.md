@@ -76,12 +76,3 @@ These results suggest that the model performs quite well, with a reasonable pred
 
 ---
 
-## How to Use
-
-To use this project and replicate the results on your own machine:
-
-### Requirements:
-- Python 3.x
-- Install dependencies using `pip`:
-  ```bash
-  pip install -r requirements.txt
