@@ -1,49 +1,64 @@
+# app.py
 import numpy as np
+import pandas as pd
 import tensorflow as tf
-from flask import Flask, request, render_template
-from sklearn.preprocessing import MinMaxScaler
-import pickle
+import joblib
+from flask import Flask, request, render_template, jsonify
 
-# Initialize Flask app
 app = Flask(__name__)
 
-# Load the pre-trained model
+# ── Load model and scaler ───────────────────────────────────────────────────
 model = tf.keras.models.load_model('gru_model.keras')
+scaler = joblib.load('scaler.pkl')
+INFERENCE_COLUMNS = joblib.load('inference_columns.pkl')
 
-# Load the scaler used during training
-with open('scaler.pkl', 'rb') as f:
-    scaler = pickle.load(f)
+SEQUENCE_LENGTH = 30
 
-# Define the input features (sensor columns)
-sensor_columns = ['Sensor_2', 'Sensor_3', 'Sensor_4', 'Sensor_7', 'Sensor_8', 'Sensor_9',
-                  'Sensor_11', 'Sensor_12', 'Sensor_13', 'Sensor_14', 'Sensor_15', 
-                  'Sensor_17', 'Sensor_20', 'Sensor_21']
-
-# Home route
+# ── Routes ──────────────────────────────────────────────────────────────────
 @app.route('/')
 def home():
-    return render_template('index.html', sensor_columns=sensor_columns)
+    return render_template('index.html')
 
-# Prediction route
+
 @app.route('/predict', methods=['POST'])
 def predict():
-    # Get the input data from the form
-    sensor_data = []
-    for column in sensor_columns:
-        sensor_value = float(request.form[column])  # get the value entered in the form
-        sensor_data.append(sensor_value)
-    
-    # Convert the input data into a numpy array
-    sensor_data = np.array(sensor_data).reshape(1, -1)  # Reshape for the model
+    # 1. Get the uploaded CSV file
+    file = request.files.get('csv_file')
+    if not file:
+        return jsonify({'error': 'No file uploaded'}), 400
 
-    # Scale the input data using the same scaler from training
-    scaled_data = scaler.transform(sensor_data)
+    # 2. Read it into a dataframe
+    try:
+        df = pd.read_csv(file)
+    except Exception as e:
+        return jsonify({'error': f'Could not read CSV: {e}'}), 400
 
-    # Make a prediction using the model
-    prediction = model.predict(scaled_data)
+    # 3. Validate shape
+    if df.shape[0] < SEQUENCE_LENGTH:
+        return jsonify({
+            'error': f'Need at least {SEQUENCE_LENGTH} rows, got {df.shape[0]}'
+        }), 400
 
-    # Show the predicted RUL (Remaining Useful Life)
-    return render_template('index.html', prediction_text=f'Predicted RUL: {prediction[0][0]:.2f}', sensor_columns=sensor_columns)
+    missing = [col for col in INFERENCE_COLUMNS if col not in df.columns]
+    if missing:
+        return jsonify({'error': f'Missing columns: {missing}'}), 400
+
+    # 4. Take the last 30 rows, in the right column order
+    df = df[INFERENCE_COLUMNS].tail(SEQUENCE_LENGTH)
+
+    # 5. Scale using the fixed scaler
+    scaled = scaler.transform(df)
+
+    # 6. Reshape to (1, 30, 18) — what the GRU expects
+    X = scaled.reshape(1, SEQUENCE_LENGTH, len(INFERENCE_COLUMNS))
+
+    # 7. Predict
+    prediction = model.predict(X)
+    rul = float(prediction[0][0])
+
+    # 8. Return result
+    return jsonify({'predicted_rul': round(rul, 1)})
+
 
 if __name__ == '__main__':
     app.run(debug=True)
